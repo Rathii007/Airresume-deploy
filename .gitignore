@@ -1,13 +1,9 @@
-# Python
-__pycache__/
-*.pyc
-.env
-
-# Node.js
 node_modules/
 .next/
-out/
-
-# Misc
+dist/
 *.log
-generated_resume.pdf
+.env
+.env.local
+__pycache__/ (if using Python for backend)
+*.pyc (if using Python for backend)
+venv/ (if using Python virtual env)
