@@ -7,3 +7,4 @@ dist/
 __pycache__/ (if using Python for backend)
 *.pyc (if using Python for backend)
 venv/ (if using Python virtual env)
+.venv

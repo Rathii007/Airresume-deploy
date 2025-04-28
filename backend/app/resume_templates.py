@@ -9,20 +9,20 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Theme Colors for "Orbits and Galaxies"
-SPACE_BLACK = colors.Color(0.1, 0.1, 0.2)  # Dark background
-GALAXY_PURPLE = colors.Color(0.4, 0.3, 0.6)  # Section headers
-ORBIT_YELLOW = colors.Color(1, 0.8, 0.4)  # Accents
-STAR_WHITE = colors.white  # Text
+# Professional Color Scheme (Google-Inspired)
+WHITE = colors.white  # Background
+BLACK = colors.black  # Text
+GOOGLE_BLUE = colors.Color(0.251, 0.522, 0.957)  # #4285F4 for headers
+
+# Alternative MNC-Inspired Color Schemes (commented out; swap as needed)
+# Microsoft: GOOGLE_BLUE -> MICROSOFT_BLUE = colors.Color(0.0, 0.471, 0.831)  # #0078D4
+# IBM: GOOGLE_BLUE -> IBM_BLUE = colors.Color(0.0, 0.4, 0.6)  # #006699
+# Deloitte: GOOGLE_BLUE -> DELOITTE_GREEN = colors.Color(0.525, 0.737, 0.145)  # #86BC25
 
 def draw_background(c, width, height):
-    """Add a subtle space-themed background."""
-    c.setFillColor(SPACE_BLACK)
+    """Add a clean white background."""
+    c.setFillColor(WHITE)
     c.rect(0, 0, width, height, fill=1)
-    # Add "stars" (small circles)
-    c.setFillColor(STAR_WHITE)
-    for x, y in [(100, 700), (200, 650), (300, 720), (400, 680)]:
-        c.circle(x, y, 2, fill=1)
 
 def wrap_text(c, text, x, y, max_width, font_size):
     """Wrap text to fit within page width and return new y position."""
@@ -44,13 +44,13 @@ def wrap_text(c, text, x, y, max_width, font_size):
     return y
 
 def modern_template(file_path, data):
-    """Generate a modern resume PDF with a space theme."""
+    """Generate a modern resume PDF with a professional theme."""
     try:
         c = canvas.Canvas(file_path, pagesize=letter)
         width, height = letter
         draw_background(c, width, height)
 
-        c.setFillColor(STAR_WHITE)
+        c.setFillColor(BLACK)
         c.setFont("Helvetica-Bold", 18)
         c.drawString(50, height - 50, data.get("name", "Anonymous"))
         c.setFont("Helvetica", 12)
@@ -59,11 +59,11 @@ def modern_template(file_path, data):
         y = height - 100
         sections = ["Education", "Experience", "Skills"]
         for section in sections:
-            c.setFillColor(GALAXY_PURPLE)
+            c.setFillColor(GOOGLE_BLUE)
             c.setFont("Helvetica-Bold", 14)
             c.drawString(50, y, section)
             y -= 20
-            c.setFillColor(STAR_WHITE)
+            c.setFillColor(BLACK)
             y = wrap_text(c, data.get(section.lower(), "N/A"), 50, y, width - 100, 12)
             y -= 10
             if y < 50:  # Prevent overflow
@@ -77,13 +77,13 @@ def modern_template(file_path, data):
         raise
 
 def classic_template(file_path, data):
-    """Generate a classic resume with a subtle space twist."""
+    """Generate a classic resume with a professional theme."""
     try:
         c = canvas.Canvas(file_path, pagesize=letter)
         width, height = letter
         draw_background(c, width, height)
 
-        c.setFillColor(STAR_WHITE)
+        c.setFillColor(BLACK)
         c.setFont("Times-Bold", 18)
         c.drawString(50, height - 50, data.get("name", "Anonymous"))
         c.setFont("Times-Roman", 12)
@@ -92,11 +92,11 @@ def classic_template(file_path, data):
         y = height - 100
         sections = ["Education", "Experience", "Skills"]
         for section in sections:
-            c.setFillColor(GALAXY_PURPLE)
+            c.setFillColor(GOOGLE_BLUE)
             c.setFont("Times-Bold", 14)
             c.drawString(50, y, section)
             y -= 20
-            c.setFillColor(STAR_WHITE)
+            c.setFillColor(BLACK)
             y = wrap_text(c, data.get(section.lower(), "N/A"), 50, y, width - 100, 12)
             y -= 10
             if y < 50:
@@ -110,29 +110,27 @@ def classic_template(file_path, data):
         raise
 
 def creative_template(file_path, data):
-    """Generate a creative resume with orbiting accents."""
+    """Generate a creative resume with a professional theme."""
     try:
         c = canvas.Canvas(file_path, pagesize=letter)
         width, height = letter
         draw_background(c, width, height)
 
-        c.setFillColor(ORBIT_YELLOW)
+        c.setFillColor(GOOGLE_BLUE)
         c.setFont("Helvetica-Bold", 20)
         c.drawString(50, height - 50, data.get("name", "Anonymous"))
-        c.setFillColor(STAR_WHITE)
+        c.setFillColor(BLACK)
         c.setFont("Helvetica-Oblique", 12)
         c.drawString(50, height - 70, f"{data.get('email', 'N/A')} | {data.get('phone', 'N/A')}")
 
         y = height - 100
         sections = ["Education", "Experience", "Skills"]
         for section in sections:
-            c.setFillColor(GALAXY_PURPLE)
+            c.setFillColor(GOOGLE_BLUE)
             c.setFont("Helvetica-Bold", 16)
             c.drawString(50, y, section)
-            c.setFillColor(ORBIT_YELLOW)
-            c.circle(40, y + 5, 3, fill=1)  # Orbit accent
             y -= 20
-            c.setFillColor(STAR_WHITE)
+            c.setFillColor(BLACK)
             y = wrap_text(c, data.get(section.lower(), "N/A"), 50, y, width - 100, 12)
             y -= 10
             if y < 50:
@@ -146,13 +144,13 @@ def creative_template(file_path, data):
         raise
 
 def executive_template(file_path, data):
-    """Generate an executive resume with a formal space theme."""
+    """Generate an executive resume with a professional theme."""
     try:
         c = canvas.Canvas(file_path, pagesize=letter)
         width, height = letter
         draw_background(c, width, height)
 
-        c.setFillColor(STAR_WHITE)
+        c.setFillColor(BLACK)
         c.setFont("Helvetica-Bold", 22)
         c.drawString(50, height - 50, data.get("name", "Anonymous"))
         c.setFont("Helvetica", 12)
@@ -162,11 +160,11 @@ def executive_template(file_path, data):
         sections = ["Education", "Experience", "Skills", "Certifications", "Achievements"]
         for section in sections:
             if section.lower() in data:
-                c.setFillColor(GALAXY_PURPLE)
+                c.setFillColor(GOOGLE_BLUE)
                 c.setFont("Helvetica-Bold", 16)
                 c.drawString(50, y, section)
                 y -= 20
-                c.setFillColor(STAR_WHITE)
+                c.setFillColor(BLACK)
                 y = wrap_text(c, data.get(section.lower(), "N/A"), 50, y, width - 100, 12)
                 y -= 10
                 if y < 50:
@@ -180,13 +178,13 @@ def executive_template(file_path, data):
         raise
 
 def minimalist_template(file_path, data):
-    """Generate a minimalist resume with a clean space aesthetic."""
+    """Generate a minimalist resume with a professional theme."""
     try:
         c = canvas.Canvas(file_path, pagesize=letter)
         width, height = letter
         draw_background(c, width, height)
 
-        c.setFillColor(STAR_WHITE)
+        c.setFillColor(BLACK)
         c.setFont("Helvetica-Bold", 18)
         c.drawString(50, height - 50, data.get("name", "Anonymous"))
         c.setFont("Helvetica", 12)
@@ -195,11 +193,11 @@ def minimalist_template(file_path, data):
         y = height - 100
         sections = ["Education", "Experience", "Skills"]
         for section in sections:
-            c.setFillColor(GALAXY_PURPLE)
+            c.setFillColor(GOOGLE_BLUE)
             c.setFont("Helvetica", 14)
             c.drawString(50, y, section)
             y -= 20
-            c.setFillColor(STAR_WHITE)
+            c.setFillColor(BLACK)
             y = wrap_text(c, data.get(section.lower(), "N/A"), 50, y, width - 100, 12)
             y -= 10
             if y < 50:

@@ -1,7 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response, Security
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, EmailStr
 from starlette.requests import Request
 from starlette.responses import Response
@@ -31,6 +32,10 @@ from docx import Document
 import uvicorn
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+import re
+import secrets
+import tempfile
+import magic  # For file type validation
 
 # Load environment variables
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
@@ -41,35 +46,38 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 SPACY_MODEL = os.getenv("SPACY_MODEL", "en_core_web_sm")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+API_KEY = os.getenv("API_KEY")  # Add API_KEY to .env for authentication
 
 if not GROQ_API_KEY:
     raise ValueError("⚠️ GROQ_API_KEY is missing! Set it in your .env file.")
+if not API_KEY:
+    raise ValueError("⚠️ API_KEY is missing! Set it in your .env file.")
 
 # Configure OpenAI API for Groq
 openai.api_key = GROQ_API_KEY
 openai.api_base = "https://api.groq.com/openai/v1"
 
 # Initialize FastAPI
-app = FastAPI(debug=ENVIRONMENT != "production")
+app = FastAPI(debug=False)  # Disable debug mode in production
 
-# Enable CORS
+# Enable CORS with strict origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-# Logging Configuration
+# Logging Configuration (Avoid logging sensitive data)
 logging.basicConfig(
-    level=logging.INFO if ENVIRONMENT == "production" else logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# Middleware for File Upload Size Limit (5 MB)
-class LimitUploadSize(BaseHTTPMiddleware):
+# Middleware for File Upload Size Limit (5 MB) and File Type Validation
+class SecureUploadMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, max_size: int):
         super().__init__(app)
         self.max_size = max_size
@@ -79,9 +87,25 @@ class LimitUploadSize(BaseHTTPMiddleware):
             content_length = int(request.headers.get("content-length", 0))
             if content_length > self.max_size:
                 raise HTTPException(status_code=413, detail="File too large. Maximum size is 5 MB.")
+            # Validate file type for upload endpoints
+            if "multipart/form-data" in request.headers.get("content-type", ""):
+                form = await request.form()
+                for field in form:
+                    if isinstance(form[field], UploadFile):
+                        file = form[field]
+                        # Use python-magic to validate file type
+                        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                            temp_file.write(await file.read())
+                            temp_file_path = temp_file.name
+                        mime_type = magic.from_file(temp_file_path, mime=True)
+                        os.remove(temp_file_path)
+                        if mime_type not in ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+                            raise HTTPException(status_code=400, detail="Only PDF and DOCX files are allowed.")
+                        # Reset file pointer
+                        file.file.seek(0)
         return await call_next(request)
 
-app.add_middleware(LimitUploadSize, max_size=5 * 1024 * 1024)
+app.add_middleware(SecureUploadMiddleware, max_size=5 * 1024 * 1024)
 
 # Middleware for Request Timeout (30 seconds)
 class TimeoutMiddleware(BaseHTTPMiddleware):
@@ -96,11 +120,8 @@ app.add_middleware(TimeoutMiddleware)
 # Middleware to enforce HTTPS by redirecting HTTP to HTTPS
 class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Check if the request is over HTTP and the environment is production
         if request.url.scheme == "http" and ENVIRONMENT == "production":
-            # Construct the HTTPS URL
             https_url = request.url.replace(scheme="https")
-            # Return a redirect response
             return Response(
                 status_code=301,
                 headers={"Location": str(https_url)},
@@ -109,11 +130,31 @@ class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(HTTPSRedirectMiddleware)
 
+# Middleware for Secure Headers
+class SecureHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "default-src 'self';"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+app.add_middleware(SecureHeadersMiddleware)
+
+# API Key Authentication
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    if not api_key or api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return api_key
+
 # Dependency Injection
 async def get_redis(request: Request):
     client = await redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
     try:
-        await client.ping()  # Test connection
+        await client.ping()
         yield client
     except redis.ConnectionError as e:
         logger.error("Failed to connect to Redis: %s", str(e))
@@ -145,7 +186,6 @@ def RateLimiter(times: int, seconds: int):
 # Startup and Shutdown Events
 @app.on_event("startup")
 async def startup_event():
-    # Create SQLite database and table for feedback
     conn = sqlite3.connect("feedback.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -160,7 +200,6 @@ async def startup_event():
     conn.commit()
     conn.close()
 
-    # Redis startup for rate limiting
     redis_client = await redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
     try:
         await redis_client.ping()
@@ -181,8 +220,6 @@ async def ai_suggestions(prompt_text):
     retry_delay = 15
     for attempt in range(max_retries):
         try:
-            logger.debug("Calling Groq API with prompt: %s", prompt_text[:50] + "...")
-            # Use aiohttp for async HTTP requests with a timeout
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     "https://api.groq.com/openai/v1/chat/completions",
@@ -194,9 +231,11 @@ async def ai_suggestions(prompt_text):
                             {"role": "user", "content": prompt_text},
                         ]
                     },
-                    timeout=10  # 10-second timeout
+                    timeout=10
                 ) as response:
                     response_data = await response.json()
+                    if "error" in response_data:
+                        raise HTTPException(status_code=500, detail="AI service error")
                     return response_data["choices"][0]["message"]["content"].strip()
         except aiohttp.ClientTimeout:
             logger.error("Groq API request timed out")
@@ -260,30 +299,33 @@ def calculate_ats_score(resume_text, nlp=Depends(get_nlp)):
 def sanitize_text(text):
     if not isinstance(text, str):
         return ""
-    return ''.join(c for c in text if ord(c) >= 32 or c in '\n\r\t')
+    # Remove control characters and potential script tags
+    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
+    text = re.sub(r'[^\x20-\x7E\n\r\t]', '', text)  # Remove non-printable characters
+    return text
 
 # Pydantic Models with Stricter Validation
 class SuggestionRequest(BaseModel):
-    jobTitle: str = Field(..., min_length=2, max_length=100)
+    jobTitle: str = Field(..., min_length=2, max_length=100, regex=r'^[a-zA-Z\s]+$')
     yearsExperience: str = Field(..., pattern=r"^\d+$", max_length=2)
 
 class EnhanceRequest(BaseModel):
-    section: str = Field(..., min_length=2, max_length=50)
+    section: str = Field(..., min_length=2, max_length=50, regex=r'^[a-zA-Z\s]+$')
     content: str = Field(..., min_length=10, max_length=2000)
-    jobTitle: Optional[str] = Field(None, min_length=2, max_length=100)
+    jobTitle: Optional[str] = Field(None, min_length=2, max_length=100, regex=r'^[a-zA-Z\s]+$')
 
 class ResumeData(BaseModel):
-    name: str = Field(..., min_length=2, max_length=100)
+    name: str = Field(..., min_length=2, max_length=100, regex=r'^[a-zA-Z\s]+$')
     email: EmailStr
-    phone: str = Field(..., max_length=20)
+    phone: str = Field(..., max_length=20, regex=r'^\+?\d{8,15}$')
     education: str = Field(..., max_length=1000)
     experience: str = Field(..., max_length=2000)
     skills: str = Field(..., max_length=1000)
-    template: str = Field(..., min_length=2, max_length=50)
+    template: str = Field(..., min_length=2, max_length=50, regex=r'^[a-zA-Z]+$')
     format: Optional[str] = "pdf"
 
 class FeedbackRequest(BaseModel):
-    name: Optional[str] = Field(None, max_length=100)
+    name: Optional[str] = Field(None, max_length=100, regex=r'^[a-zA-Z\s]*$')
     email: Optional[EmailStr] = None
     feedback: str = Field(..., min_length=10, max_length=1000)
 
@@ -313,7 +355,7 @@ def improved_extract_resume(file_bytes, nlp=Depends(get_nlp)):
     return {k: sanitize_text(v) for k, v in data.items()}
 
 # Endpoints
-@app.post("/parse-resume/")
+@app.post("/parse-resume/", dependencies=[Depends(verify_api_key)])
 async def parse_resume(file: UploadFile, rate_limit=Depends(RateLimiter(times=5, seconds=60))):
     try:
         content = await file.read()
@@ -340,14 +382,14 @@ async def parse_resume(file: UploadFile, rate_limit=Depends(RateLimiter(times=5,
         return {"sections": sections}
     except Exception as e:
         logger.error("Parse resume error: %s", str(e))
-        raise HTTPException(status_code=500, detail=f"Error parsing file: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error parsing file")
 
-@app.post("/extract-resume/")
+@app.post("/extract-resume/", dependencies=[Depends(verify_api_key)])
 async def extract_resume(resume: UploadFile = File(...), nlp=Depends(get_nlp), rate_limit=Depends(RateLimiter(times=5, seconds=60))):
     resume_bytes = await resume.read()
     return improved_extract_resume(resume_bytes, nlp)
 
-@app.post("/suggest-content/")
+@app.post("/suggest-content/", dependencies=[Depends(verify_api_key)])
 async def suggest_content(data: SuggestionRequest, rate_limit=Depends(RateLimiter(times=3, seconds=60))):
     prompt = (
         f"Generate a resume for a {data.jobTitle} with {data.yearsExperience} years of experience. "
@@ -367,33 +409,31 @@ async def suggest_content(data: SuggestionRequest, rate_limit=Depends(RateLimite
             data["skills"] = sanitize_text("\n".join([l.strip() for l in response.split("\n") if l.startswith("- ") and "Skills" not in l][:5]))
     return data
 
-@app.post("/enhance-section/")
+@app.post("/enhance-section/", dependencies=[Depends(verify_api_key)])
 async def enhance_section(data: EnhanceRequest, rate_limit=Depends(RateLimiter(times=5, seconds=60))):
     context = f" for a {data.jobTitle}" if data.jobTitle else ""
     prompt = (
         f"Rewrite this {data.section} section{context} to be concise, professional, and ATS-friendly:\n"
         f"{data.content}\n"
-        f"Return the enhanced version only, no extra text."
+        "Return the enhanced version only, no extra text."
     )
     enhanced = await ai_suggestions(prompt)
     return {"enhanced": sanitize_text(enhanced)}
 
-@app.post("/ats-preview/")
+@app.post("/ats-preview/", dependencies=[Depends(verify_api_key)])
 async def ats_preview(data: ResumeData, nlp=Depends(get_nlp), rate_limit=Depends(RateLimiter(times=5, seconds=60))):
     resume_text = f"{data.name}\n{data.email}\n{data.phone}\n{data.education}\n{data.experience}\n{data.skills}"
     ats_score = calculate_ats_score(resume_text, nlp)
     return {"ats_score": ats_score}
 
-@app.post("/generate-resume/")
+@app.post("/generate-resume/", dependencies=[Depends(verify_api_key)])
 async def generate_resume(data: ResumeData, rate_limit=Depends(RateLimiter(times=10, seconds=60))):
     try:
         data_dict = data.model_dump()
         format = data_dict.pop("format", "pdf")
         
-        # Sanitize input data
         sanitized_data = {k: sanitize_text(v) for k, v in data_dict.items()}
         
-        # Define available templates
         template_styles = {
             "modern": {"font": "Helvetica", "color": "blue"},
             "classic": {"font": "Times", "color": "black"},
@@ -409,30 +449,24 @@ async def generate_resume(data: ResumeData, rate_limit=Depends(RateLimiter(times
             )
 
         if format == "pdf":
-            # Generate PDF in memory using reportlab
             buffer = BytesIO()
             c = canvas.Canvas(buffer, pagesize=letter)
             width, height = letter
             
-            # Apply basic styling based on template
             c.setFont(template_styles[sanitized_data["template"]]["font"], 12)
             c.setFillColor(template_styles[sanitized_data["template"]]["color"])
             
-            # Add content
             y_position = height - 50
             line_height = 15
             
-            # Name
             c.setFontSize(16)
             c.drawString(50, y_position, sanitized_data.get("name", "Your Name"))
             y_position -= line_height * 2
             
-            # Contact Info
             c.setFontSize(12)
             c.drawString(50, y_position, f"{sanitized_data.get('email', '')} | {sanitized_data.get('phone', '')}")
             y_position -= line_height * 2
             
-            # Education
             c.setFontSize(14)
             c.drawString(50, y_position, "Education")
             y_position -= line_height
@@ -442,7 +476,6 @@ async def generate_resume(data: ResumeData, rate_limit=Depends(RateLimiter(times
                 y_position -= line_height
             y_position -= line_height
             
-            # Experience
             c.setFontSize(14)
             c.drawString(50, y_position, "Experience")
             y_position -= line_height
@@ -452,7 +485,6 @@ async def generate_resume(data: ResumeData, rate_limit=Depends(RateLimiter(times
                 y_position -= line_height
             y_position -= line_height
             
-            # Skills
             c.setFontSize(14)
             c.drawString(50, y_position, "Skills")
             y_position -= line_height
@@ -472,10 +504,8 @@ async def generate_resume(data: ResumeData, rate_limit=Depends(RateLimiter(times
             )
         
         elif format == "docx":
-            # Generate DOCX in memory using python-docx
             doc = Document()
             
-            # Add content
             doc.add_heading(sanitized_data.get("name", "Your Name"), level=1)
             doc.add_paragraph(f"{sanitized_data.get('email', '')} | {sanitized_data.get('phone', '')}")
             doc.add_heading("Education", level=2)
@@ -485,7 +515,6 @@ async def generate_resume(data: ResumeData, rate_limit=Depends(RateLimiter(times
             doc.add_heading("Skills", level=2)
             doc.add_paragraph(sanitized_data.get("skills", "Add your skills"))
             
-            # Save to BytesIO buffer
             buffer = BytesIO()
             doc.save(buffer)
             buffer.seek(0)
@@ -501,9 +530,9 @@ async def generate_resume(data: ResumeData, rate_limit=Depends(RateLimiter(times
     
     except Exception as e:
         logger.error(f"Generate resume failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate resume: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate resume")
 
-@app.post("/match-resume/")
+@app.post("/match-resume/", dependencies=[Depends(verify_api_key)])
 async def match_resume(
     resume: UploadFile = File(...),
     job_description: Optional[str] = Form(default=None, max_length=5000),
@@ -653,9 +682,9 @@ async def match_resume(
             }
     except Exception as e:
         logger.error(f"Job matching failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to process resume: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to process resume")
 
-@app.post("/resume-roast/")
+@app.post("/resume-roast/", dependencies=[Depends(verify_api_key)])
 async def resume_roast(
     file: UploadFile = File(...),
     roast_level: Optional[str] = Form(default="spicy", max_length=10),
@@ -700,7 +729,6 @@ async def submit_feedback(feedback: FeedbackRequest, rate_limit=Depends(RateLimi
         feedback_data = feedback.dict()
         feedback_data["submitted_at"] = datetime.utcnow().isoformat()
 
-        # Log feedback to SQLite
         conn = sqlite3.connect("feedback.db")
         cursor = conn.cursor()
         cursor.execute(
@@ -715,7 +743,7 @@ async def submit_feedback(feedback: FeedbackRequest, rate_limit=Depends(RateLimi
         conn.commit()
         conn.close()
 
-        logger.info(f"Feedback received: {feedback_data}")
+        logger.info("Feedback received")
         return {"message": "Thank you for your feedback!"}
     except Exception as e:
         logger.error(f"Feedback submission failed: {str(e)}")
@@ -727,4 +755,4 @@ async def root():
 
 # Run the app
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info" if ENVIRONMENT == "production" else "debug")
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
