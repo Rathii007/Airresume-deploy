@@ -727,4 +727,5 @@ async def root():
 
 # Run the app
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info" if ENVIRONMENT == "production" else "debug")
+    port = int(os.getenv("PORT", 10000))  # Default to 10000 if PORT not set
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
