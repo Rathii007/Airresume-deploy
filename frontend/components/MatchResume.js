@@ -9,7 +9,7 @@ import { memo } from "react";
 
 ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "https://github.com/Rathii007/Airresume-deploy.git";
 
 const RadarChart = memo(({ data }) => (
   <Radar

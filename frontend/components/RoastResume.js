@@ -3,7 +3,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "https://github.com/Rathii007/Airresume-deploy.git";
 
 export default function RoastResume() {
   const [resumeFile, setResumeFile] = useState(null);

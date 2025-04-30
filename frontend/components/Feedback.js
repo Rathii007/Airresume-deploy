@@ -45,7 +45,7 @@ const Feedback = () => {
     setMessage("");
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/feedback/", {
+      const response = await fetch("https://github.com/Rathii007/Airresume-deploy.git/feedback/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, feedback }),
