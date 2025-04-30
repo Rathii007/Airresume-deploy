@@ -5,7 +5,7 @@
      import { toast, ToastContainer } from "react-toastify";
      import "react-toastify/dist/ReactToastify.css";
 
-     const API_BASE_URL = "https://github.com/Rathii007/Airresume-deploy.git";
+     const API_BASE_URL = "https://airresume-backend-owvb.onrender.com";
 
      export default function GenerateResume() {
        const [step, setStep] = useState("start");

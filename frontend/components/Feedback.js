@@ -45,7 +45,7 @@ const Feedback = () => {
     setMessage("");
 
     try {
-      const response = await fetch("https://github.com/Rathii007/Airresume-deploy.git/feedback/", {
+      const response = await fetch("https://airresume-backend-owvb.onrender.com/feedback/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, feedback }),
